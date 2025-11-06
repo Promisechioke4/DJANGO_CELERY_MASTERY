@@ -1,0 +1,120 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7.0.11-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+  django:
+    container_name: django
+    build:
+      context: ./chatapp
+    # entrypoint: []  
+    command: sh ./entrypoint-django.sh
+    volumes:
+      - ./chatapp:/usr/src/app
+    ports:
+      - "8001:8000"
+    environment:
+      DEBUG: 1
+      SECRET_KEY: django-insecure-*$q_vkah2k-vt=82l@g=*&ca4g@g%9768%xmskpg4ov5f&*7_k
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  celery:
+    container_name: celery
+    build:
+      context: ./chatapp
+    entrypoint: []  
+    command: celery -A chatapp worker -l info
+    volumes:
+      - ./chatapp:/usr/src/app
+    environment:
+      DEBUG: 1
+      SECRET_KEY: django-insecure-*$q_vkah2k-vt=82l@g=*&ca4g@g%9768%xmskpg4ov5f&*7_k
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+      - django
+
+  celery-beat:
+    container_name: celery-beat
+    build:
+      context: ./chatapp
+    entrypoint: []  
+    command: celery -A chatapp beat -l info
+    volumes:
+      - ./chatapp:/usr/src/app
+    environment:
+      DEBUG: 1
+      SECRET_KEY: django-insecure-*$q_vkah2k-vt=82l@g=*&ca4g@g%9768%xmskpg4ov5f&*7_k
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+      - django
+
+  flower:
+    container_name: flower
+    build:
+      context: ./chatapp
+    entrypoint: [] 
+    command: >
+      celery --broker=redis://redis:6379/0 flower 
+      --port=5555
+      --enable-prometheus
+      --basic_auth=${FLOWER_BASIC_AUTH}
+    volumes:
+      - ./chatapp:/usr/src/app
+    ports:
+      - "5555:5555"
+    environment:
+      DEBUG: 1
+      SECRET_KEY: django-insecure-*$q_vkah2k-vt=82l@g=*&ca4g@g%9768%xmskpg4ov5f&*7_k
+      ALLOWED_HOSTS: localhost,127.0.0.1
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+    depends_on:
+      - redis
+      - django
+      - celery
+
+  celery-exporter:
+    image: danihodovic/celery-exporter:latest
+    container_name: celery-exporter
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_STATSD=false
+    depends_on:
+      - redis
+    ports:
+      - "9419:9419"
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - celery-exporter
+      - flower
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
